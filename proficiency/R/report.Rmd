@@ -1,0 +1,280 @@
+---
+title: "비교숙련도 시험 보고서"
+output:
+  word_document:
+    reference_docx: null
+params:
+  csv: "../samples/antibacterial_R_saureus.csv"
+  strain: "황색포도상구균 (Staphylococcus aureus)"
+  atcc: "ATCC 6538P"
+  lot: "8923"
+  method: "ISO 22196"
+  input_type: "r"
+  delta: 0.25
+  alpha: 0.05
+  trials: 10000
+  assigned: null
+  sigma: null
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+source("proficiency.R")
+
+dat <- read_results(params$csv)
+res <- analyze_proficiency(dat, input_type = params$input_type,
+                           delta = params$delta, alpha = params$alpha,
+                           trials = params$trials,
+                           assigned = params$assigned, sigma = params$sigma)
+
+fmt <- function(x, d = 4) formatC(x, format = "f", digits = d)
+pfmt <- function(p) if (p < 0.0001) "< 0.0001" else formatC(p, format = "f", digits = 4)
+kb <- function(df, digits = 4) knitr::kable(df, digits = digits, row.names = FALSE)
+```
+
+## 1. 시험 개요
+
+시험방법에 따라 사용 균주에 대하여 시험자 간 시험결과의 평균 차이를 비교하여
+비교숙련도를 측정한다.
+
+```{r}
+kb(data.frame(
+  항목 = c("시험방법", "균주명", "ATCC No.", "Lot No.",
+           "시험자 수", "시험자당 측정값", "측정 단위",
+           "유의수준", "동등성 한계"),
+  내용 = c(params$method, params$strain, params$atcc, params$lot,
+           length(res$names), res$n_per_analyst, res$unit,
+           paste0("α = ", params$alpha),
+           paste0("δ = ±", params$delta)),
+  check.names = FALSE
+))
+```
+
+## 2. 시험 결과
+
+```{r}
+tbl <- as.data.frame(t(dat$values))
+colnames(tbl) <- dat$names
+# kable 은 열마다 자릿수를 달리 잡으므로 문자열로 고정한다.
+nd <- if (params$input_type == "cfu") 0 else 2
+body <- rbind(tbl, colMeans(tbl))
+result_tbl <- data.frame(
+  No. = c(as.character(seq_len(nrow(tbl))), "평균"),
+  lapply(body, function(col) formatC(col, format = "f", digits = nd)),
+  check.names = FALSE
+)
+colnames(result_tbl) <- c("No.", dat$names)
+kb(result_tbl)
+```
+
+## 3. 등분산 검정 (Levene 검정)
+
+**방법**
+
+- 귀무가설: 모든 분산이 동일하다
+- 대립가설: 하나 이상의 분산이 다르다
+- 유의수준: α = `r params$alpha`
+- 중앙값 중심(Brown-Forsythe) 방식으로, 분산분석 전에 수행한다
+
+**시험자별 표준편차**
+
+```{r}
+kb(res$summary, digits = 6)
+```
+
+**검정**
+
+```{r}
+kb(data.frame(
+  방법 = "Levene 검정",
+  `검정 통계량` = fmt(res$levene$statistic),
+  `P-값` = pfmt(res$levene$p.value),
+  check.names = FALSE
+))
+```
+
+```{r results = "asis"}
+lev_ok <- res$levene$p.value > params$alpha
+cat(sprintf(
+  "Levene 검정 결과 P-값 %s 유의수준(α = %s)이므로 귀무가설을 %s한다.\n\n따라서 시험자 %d인간 시험결과의 **분산에는 차이가 %s** = %s이다.\n",
+  if (lev_ok) ">" else "<", params$alpha,
+  if (lev_ok) "채택" else "기각",
+  length(res$names),
+  if (lev_ok) "없다" else "있다",
+  if (lev_ok) "등분산" else "이분산"))
+```
+
+## 4. 일원 분산분석 (ANOVA)
+
+**방법**
+
+- 귀무가설: 모든 평균이 동일하다
+- 대립가설: 평균이 모두 같지는 않음
+- 유의수준: α = `r params$alpha`
+- 분석을 위해 분산이 같다고 가정하였다
+
+**분산 분석**
+
+```{r}
+tab <- res$anova
+tab[["Adj SS"]] <- fmt(tab[["Adj SS"]])
+tab[["Adj MS"]] <- ifelse(is.na(res$anova[["Adj MS"]]), "", fmt(res$anova[["Adj MS"]], 5))
+tab[["F-값"]]  <- ifelse(is.na(res$anova[["F-값"]]),  "", fmt(res$anova[["F-값"]], 2))
+tab[["P-값"]]  <- ifelse(is.na(res$anova[["P-값"]]),  "", pfmt(res$anova[["P-값"]][1]))
+kb(tab)
+```
+
+```{r results = "asis"}
+an_ok <- res$anova_p > params$alpha
+cat(sprintf(
+  "귀무가설 = 시험자 %d인간 시험결과의 **평균 값**에 차이가 없다.\n\n요인에 따른 P-값 %s 유의수준(α = %s)이므로 귀무가설을 %s한다.\n",
+  length(res$names),
+  if (an_ok) ">" else "<", params$alpha,
+  if (an_ok) "채택" else "기각"))
+
+if (!an_ok) {
+  cat("\n> 주의: 분산분석이 검정하는 것은 **평균**이지 분산이 아니다.",
+      "P-값이 유의수준보다 작으므로 시험자 간 평균 차이가 탐지되었다.",
+      "이 경우 결론을 '차이가 없다'로 적어서는 안 되며, 원인 조사가 필요하다.\n")
+} else {
+  cat("\n> 주의: 분산분석의 '채택'은 차이를 **찾지 못했다**는 뜻이지",
+      "차이가 **없음을 입증**한 것이 아니다. 동등성 입증은 6장의 TOST 가 담당한다.\n")
+}
+```
+
+## 5. 숙련도 판정 (z-score, ISO/IEC 17043)
+
+숙련도 합격 여부의 **주 판정**이다. 분산분석은 차이를 탐지하는 검정이지
+개인의 숙련도 합격·불합격을 판정하는 도구가 아니다.
+
+```{r}
+zt <- data.frame(
+  시험자 = res$names,
+  평균 = fmt(res$summary[["평균"]]),
+  `z-score` = fmt(res$z$z, 2),
+  판정 = res$z$flag,
+  check.names = FALSE
+)
+kb(zt)
+```
+
+```{r results = "asis"}
+cat(sprintf("- 기준값 = %s, 표준편차 σ = %s%s\n",
+            fmt(res$z$assigned), fmt(res$z$sigma),
+            if (is.null(params$sigma))
+              " (ISO 13528 Algorithm A 로 참가자 자료에서 추정)" else " (절차서 규정값)"))
+cat(sprintf("- 판정 기준: |z| < 2 만족, 2 ≤ |z| < 3 경고, |z| ≥ 3 부적합\n"))
+cat(sprintf("- 최대 |z| = %s\n\n", fmt(max(abs(res$z$z)), 2)))
+cat(sprintf("**판정: %s**\n",
+            if (all(res$z$flag == "만족")) "시험자 전원 만족" else "부적합 또는 경고 대상 있음"))
+if (is.null(params$sigma)) {
+  cat("\n> 참가자 자료에서 σ 를 추정하면 순환논리가 되고, 참가자 수가 적으면",
+      "로버스트 추정이 불안정하다. 절차서에 목표 재현성 σ 를 규정하고",
+      "그 값을 params$sigma 로 넘기는 것이 원칙에 맞다.\n")
+}
+```
+
+## 6. 동등성 검정 (TOST)
+
+"차이가 없다"를 실제로 입증하는 검정이다. 모든 쌍이 동등해야 전체가 동등하므로
+쌍별 P-값 중 최댓값으로 판정한다. 교집합-합집합 검정이라 다중비교 보정이 필요 없다.
+
+```{r}
+pt_tab <- res$tost$pairs
+pt_tab[["평균차"]] <- fmt(pt_tab[["평균차"]])
+pt_tab[["P-값"]] <- vapply(res$tost$pairs[["P-값"]], pfmt, character(1))
+kb(pt_tab)
+```
+
+```{r results = "asis"}
+cat(sprintf("- 동등성 한계 δ = ±%s, 최대 평균차 = %s\n",
+            params$delta, fmt(res$tost$max_abs_diff)))
+cat(sprintf("- 최대 P-값 = %s\n\n", pfmt(res$tost$p.value)))
+cat(sprintf("**판정: %s**\n", if (res$tost$passed)
+  sprintf("시험자 간 평균이 ±%s 이내로 동등함이 입증되었다.", params$delta)
+  else sprintf("±%s 이내의 동등성을 입증하지 못했다.", params$delta)))
+```
+
+## 7. 이상치 검정 (Grubbs)
+
+```{r}
+g1 <- res$grubbs_all; g2 <- res$grubbs_means
+kb(data.frame(
+  대상 = c("전체 측정값", "시험자 평균"),
+  `G 통계량` = fmt(c(g1$statistic, g2$statistic)),
+  `임계값` = fmt(c(g1$critical, g2$critical)),
+  `최대편차 값` = fmt(c(g1$value, g2$value)),
+  해당자 = c(res$grubbs_all_owner, res$names[g2$index]),
+  판정 = ifelse(c(g1$passed, g2$passed), "이상치 아님", "이상치"),
+  check.names = FALSE
+))
+```
+
+```{r results = "asis"}
+if (res$grubbs_all$passed && res$grubbs_means$passed) {
+  cat("통계적 이상치가 검출되지 않았다.",
+      "눈에 띄는 값이 있더라도 **제외할 근거가 없으므로 전부 보고에 포함해야 한다.**\n")
+}
+```
+
+## 8. 진단 — 무작위 재배정 통과율
+
+전체 측정값을 시험자에게 무작위로 다시 배정했을 때, 현행 기준(등분산 + 분산분석)을
+통과하는 비율이다. 탈락 원인이 자료의 산포 때문인지 시험자별 체계적 편향 때문인지
+구분한다.
+
+```{r results = "asis"}
+cat(sprintf("- 무작위 재배정 통과율: **%s%%** (%s회 시행)\n",
+            fmt(res$random_rate * 100, 1), format(params$trials, big.mark = ",")))
+cat(sprintf("- 실제 배정: **%s**\n\n", if (res$classic_pass) "통과" else "탈락"))
+
+if (res$random_rate >= 0.5 && !res$classic_pass) {
+  cat(sprintf(paste0("무작위로 섞으면 %s%% 가 통과하는데 실제 배정만 탈락하였다. ",
+    "우연이 아니라 **시험자별 체계적 편향이 실재한다**는 뜻이다. ",
+    "배정을 바꾸어 통과시키는 것은 이 편향을 은폐하는 것이므로, ",
+    "편향의 원인(접종액 조제, 세척 회수, 판독 습관 등)을 조사하여야 한다.\n"),
+    fmt(res$random_rate * 100, 0)))
+} else if (res$random_rate < 0.5) {
+  cat("무작위 배정으로도 절반 이상 탈락한다. 자료의 산포 자체가 커서",
+      "**어떤 배정으로도 정당하게 통과할 수 없다.** 시험 기법 표준화가 선행되어야 한다.\n")
+} else {
+  cat("자료의 산포가 충분히 작고 실제 배정도 통과하였다.\n")
+}
+```
+
+## 9. 종합 결론
+
+```{r results = "asis"}
+z_ok <- all(res$z$flag == "만족")
+cat(sprintf("1. **숙련도 판정(주 판정, ISO/IEC 17043)**: 최대 |z| = %s → %s\n",
+            fmt(max(abs(res$z$z)), 2),
+            if (z_ok) "시험자 전원 만족" else "부적합 또는 경고 대상 있음"))
+cat(sprintf("2. **등분산 검정**: P = %s → 시험자 간 산포는 %s\n",
+            pfmt(res$levene$p.value),
+            if (res$levene$p.value > params$alpha) "동일하다" else "다르다"))
+cat(sprintf("3. **분산분석**: P = %s → 시험자 간 평균 차이가 %s\n",
+            pfmt(res$anova_p),
+            if (res$anova_p > params$alpha) "탐지되지 않았다" else "탐지되었다"))
+cat(sprintf("4. **동등성 검정**: 최대 평균차 %s (한계 ±%s) → %s\n",
+            fmt(res$tost$max_abs_diff), params$delta,
+            if (res$tost$passed) "동등성 입증" else "동등성 미입증"))
+cat(sprintf("5. **이상치**: %s\n\n",
+            if (res$grubbs_all$passed && res$grubbs_means$passed)
+              "제외 대상 없음" else "이상치 검출됨"))
+
+if (z_ok && res$anova_p <= params$alpha) {
+  cat("종합하면, 시험자 전원이 숙련도 판정 기준(|z| < 2)을 만족하나 ",
+      "분산분석에서 평균 차이가 탐지되었다. 숙련도는 적합으로 판정하되, ",
+      "평균 차이의 원인에 대한 조사와 개선 조치를 권고한다.\n", sep = "")
+} else if (z_ok) {
+  cat("종합하면, 시험자 전원이 숙련도 판정 기준을 만족하며 ",
+      "시험자 간 유의한 차이도 탐지되지 않았다. 비교숙련도는 적합으로 판정한다.\n", sep = "")
+} else {
+  cat("종합하면, 숙련도 판정 기준을 만족하지 못한 시험자가 있다. ",
+      "해당 시험자에 대한 원인 조사와 재시험이 필요하다.\n", sep = "")
+}
+```
+
+---
+
+*작성: `r format(Sys.Date(), "%Y-%m-%d")` · 분석 도구: R `r paste(R.version$major, R.version$minor, sep=".")`*
