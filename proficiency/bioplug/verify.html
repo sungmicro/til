@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>검증 — 비교숙련도 설계</title>
+<style>
+  :root {
+    --bg: #fbfbf9; --fg: #1c1c1a; --muted: #6b6b63; --line: #e0e0d8;
+    --card: #ffffff; --accent: #2f6f4e; --warn: #8a4b1f; --bad: #9b2c2c;
+    --chip: #f0f0ea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16171a; --fg: #e8e8e4; --muted: #9a9a92; --line: #303238;
+      --card: #1e2024; --accent: #6fbf90; --warn: #d9a05b; --bad: #e08585;
+      --chip: #262930;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16171a; --fg: #e8e8e4; --muted: #9a9a92; --line: #303238;
+    --card: #1e2024; --accent: #6fbf90; --warn: #d9a05b; --bad: #e08585;
+    --chip: #262930;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--fg); margin: 0;
+         font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", sans-serif; }
+  .wrap { max-width: 1000px; margin: 0 auto; padding-block: 32px; padding-left: 20px; padding-right: 20px; }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 16px; margin: 32px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  h3 { font-size: 14px; margin: 20px 0 8px; color: var(--muted); }
+  p.sub { color: var(--muted); margin: 0 0 24px; font-size: 13px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  input, select, textarea, button {
+    font: inherit; color: inherit; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; width: 100%;
+  }
+  textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  button { background: var(--accent); color: #fff; border: none; cursor: pointer; font-weight: 600; }
+  button:hover { filter: brightness(1.08); }
+  button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); font-weight: 500; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+  .row button { width: auto; padding: 9px 18px; }
+  .tablewrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; white-space: nowrap; }
+  th { background: var(--chip); font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td input { padding: 4px 6px; min-width: 74px; text-align: right;
+             font-variant-numeric: tabular-nums; border-radius: 4px; }
+  .note { border-left: 3px solid var(--line); padding: 10px 14px; margin: 14px 0;
+          color: var(--muted); font-size: 13px; background: var(--chip); border-radius: 0 6px 6px 0; }
+  .note.warn { border-left-color: var(--warn); color: var(--fg); }
+  .note.bad  { border-left-color: var(--bad);  color: var(--fg); }
+  .ok { color: var(--accent); font-weight: 600; }
+  .no { color: var(--bad); font-weight: 600; }
+  .wa { color: var(--warn); font-weight: 600; }
+  .hidden { display: none !important; }
+  #gate { position: fixed; inset: 0; background: var(--bg); display: grid; place-items: center; z-index: 10; }
+  #gate .card { width: min(360px, calc(100vw - 40px)); text-align: center; }
+  #gateMsg { color: var(--bad); font-size: 13px; min-height: 20px; margin: 8px 0 0; }
+  code { background: var(--chip); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+  pre { background: var(--chip); border: 1px solid var(--line); border-radius: 8px;
+        padding: 14px; overflow-x: auto; font-size: 12px; line-height: 1.5; }
+  .spare { color: var(--muted); }
+  .excluded { text-decoration: line-through; color: var(--bad); }
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <form class="card" id="gateForm">
+    <h1>검증</h1>
+    <p class="sub">비교숙련도 설계 검증 · 내부용</p>
+    <label for="pw">비밀번호</label>
+    <input type="password" id="pw" autocomplete="current-password" autofocus>
+    <p id="gateMsg" role="alert"></p>
+    <div class="row"><button type="submit" style="width:100%">열기</button></div>
+  </form>
+</div>
+
+<div class="wrap hidden" id="app">
+  <h1>검증 — 비교숙련도 설계</h1>
+  <p class="sub">
+    시험 <strong>전에</strong> 시편을 배정하고, 이 설계로 판정이 성립하는지 확인한다.
+    입력하는 값은 본 시험 전 <strong>스크리닝 측정값</strong>이다.
+  </p>
+
+  <h2>1. 설계</h2>
+  <div class="card">
+    <div class="grid">
+      <div><label for="nAnalysts">시험자 수</label>
+        <select id="nAnalysts"></select></div>
+      <div><label for="nSamples">시료 종수</label>
+        <select id="nSamples"></select></div>
+      <div><label for="reps">시료당 반복 (1인)</label>
+        <select id="reps"></select></div>
+      <div><label for="spares">여분 (시료당)</label>
+        <select id="spares"></select></div>
+      <div><label for="unit">입력 단위</label>
+        <select id="unit">
+          <option value="r">R (항균활성)</option>
+          <option value="cfu">CFU (집락수)</option>
+        </select></div>
+      <div><label for="delta">동등성 한계 δ</label>
+        <input type="number" id="delta" value="0.25" step="0.01" min="0.01"></div>
+      <div><label for="alpha">유의수준 α</label>
+        <input type="number" id="alpha" value="0.05" step="0.01" min="0.001" max="0.2"></div>
+      <div><label for="seed">난수 시드</label>
+        <input type="number" id="seed" value="20260914" step="1"></div>
+    </div>
+    <div class="row">
+      <button id="btnGrid" type="button">입력표 만들기</button>
+      <button id="btnDemo" type="button" class="ghost">예시 값 채우기</button>
+    </div>
+    <p class="note" id="needNote"></p>
+  </div>
+
+  <div id="inputSection" class="hidden">
+    <h2>2. 스크리닝 값 입력</h2>
+    <div class="card">
+      <p class="note">
+        각 시편을 본 시험 전에 1회 측정한 값이다. 이 값으로 시료 로트의 균질성을 확인하고,
+        통계적 이상치로 판정된 시편만 여분으로 교체한다.
+        교체 기준은 Grubbs 검정이며, 결과가 마음에 드는지와는 무관하게 적용된다.
+      </p>
+      <div class="tablewrap"><table id="inputTable"></table></div>
+      <div class="row">
+        <button id="btnRun" type="button">검증 및 배정 생성</button>
+        <button id="btnClear" type="button" class="ghost">지우기</button>
+      </div>
+      <p id="inputMsg" class="note bad hidden"></p>
+    </div>
+  </div>
+
+  <div id="results" class="hidden"></div>
+  <div id="rcodeSection" class="hidden">
+    <h2>6. 분석 보고서용 R 코드</h2>
+    <div class="card">
+      <p class="note">
+        아래 코드를 <code>proficiency.R</code> 로 저장하고 R 에서 실행하면
+        Word 보고서가 만들어진다. 측정이 끝나면 <code>results</code> 의 빈 값을 채우면 된다.
+      </p>
+      <div class="row">
+        <button id="btnCopy" type="button">복사</button>
+        <button id="btnDownload" type="button" class="ghost">R 파일 내려받기</button>
+        <button id="btnCsv" type="button" class="ghost">배정표 CSV 내려받기</button>
+      </div>
+      <pre id="rcode"></pre>
+    </div>
+  </div>
+
+  <h2>주의</h2>
+  <p class="note warn">
+    이 페이지의 비밀번호는 브라우저에서만 확인한다. 동료가 실수로 들어오는 것을 막는 용도이며,
+    페이지 소스를 보면 우회할 수 있으므로 <strong>실제 접근 통제가 아니다.</strong>
+    진짜로 막아야 하는 자료라면 서버 쪽 인증이 필요하다.
+  </p>
+  <p class="note">
+    배정은 시험 <strong>전에</strong> 확정하고 시드와 함께 기록으로 남긴다.
+    측정 결과를 보고 배정을 바꾸면 시험자 간 편향을 은폐하게 되고,
+    ISO/IEC 17025 기록 요구사항에도 어긋난다.
+  </p>
+</div>
+
+<script src="verify-stats.js"></script>
+<script src="verify-app.js"></script>
+</body>
+</html>
