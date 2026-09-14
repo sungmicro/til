@@ -9,20 +9,53 @@
 | `verify-stats.js` | 통계 구현. Python·R 구현과 대조 검증됨 |
 | `verify-app.js` | 배정·검증·R 코드 생성 로직 |
 
-## 설치
+## 설치 — 한 줄
 
-세 파일을 `~/bioplug/public/` 에 복사하고 기존 내비게이션에 링크를 추가한다.
+`install-verify.sh` 를 받아서 실행하면 끝난다. 파일 내용이 스크립트 안에 들어 있어
+따로 내려받을 것이 없다.
 
 ```bash
-cp verify.html verify-stats.js verify-app.js ~/bioplug/public/
-cd ~/bioplug && npx vercel --prod --yes
+bash install-verify.sh              # ~/bioplug/public 에 설치
+bash install-verify.sh ~/경로/bioplug  # 다른 위치
 ```
 
-`build.mjs` 가 `public/` 을 덮어쓴다면, 세 파일을 빌드가 건드리지 않는 정적 자산으로
-두거나 `build.mjs` 의 복사 대상에 추가한다. 페이지 자체는 `data/*.json` 을 읽지 않으므로
-빌드 파이프라인에 엮을 필요는 없다.
+하는 일은 이렇다.
 
-배포 후 주소는 `https://bioplug.vercel.app/verify.html` 이다.
+- `public/` 에 세 파일을 쓴다 (기존 파일이 있으면 타임스탬프를 붙여 백업)
+- 다시 설치할 수 있도록 `tools/install-verify.sh` 에 자기 사본을 둔다
+- `build.mjs` 가 `public/` 을 지우는지 검사해서, 그렇다면 `postbuild` 설정을 안내한다
+- 나머지 파일은 건드리지 않는다
+
+빌드가 `public/` 을 비운다면 `package.json` 에 한 줄을 넣어 자동 복구시킨다.
+
+```json
+"postbuild": "bash tools/install-verify.sh ."
+```
+
+설치 후 확인과 배포:
+
+```bash
+cd ~/bioplug/public && python3 -m http.server 8000   # http://localhost:8000/verify.html
+cd ~/bioplug && npx vercel --prod --yes              # https://bioplug.vercel.app/verify.html
+```
+
+메뉴에는 `<a href="/verify.html">검증</a>` 을 추가한다.
+
+### 파일 하나로 쓰고 싶다면
+
+`verify-standalone.html` 은 JS 를 심어 넣은 단일 파일이다. `public/` 에 복사만 하면 된다.
+`verify.html` 과 기능이 같다.
+
+### 원본과 배포물
+
+`install-verify.sh` 와 `verify-standalone.html` 은 **자동 생성 파일**이다.
+직접 고치지 말고 원본 세 파일을 고친 뒤 다시 만든다.
+
+```bash
+python3 build-installer.py
+```
+
+`tests/test_bioplug_build.py` 가 배포물이 원본과 어긋나지 않는지 검사한다.
 
 ## 비밀번호
 
