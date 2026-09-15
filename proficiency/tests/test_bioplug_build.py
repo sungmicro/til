@@ -14,7 +14,7 @@ import unittest
 HERE = os.path.dirname(__file__)
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
 BIOPLUG = os.path.join(ROOT, "bioplug")
-SOURCES = ["verify.html", "verify-stats.js", "verify-app.js"]
+SOURCES = ["verify.html", "verify-stats.js", "verify-judge.js", "verify-app.js"]
 BUILT = ["install-verify.sh", "verify-standalone.html"]
 
 BASH = shutil.which("bash")
@@ -115,7 +115,8 @@ class TestStandaloneRuns(unittest.TestCase):
         """단일 파일에 심은 JS 가 문법적으로 온전해야 한다."""
         html = read(os.path.join(BIOPLUG, "verify-standalone.html"))
         blocks = html.split("<script>")[1:]
-        self.assertEqual(len(blocks), 2)
+        # verify.html 을 뺀 나머지가 심어 넣는 JS 다.
+        self.assertEqual(len(blocks), len(SOURCES) - 1)
         for i, block in enumerate(blocks):
             code = block.split("</script>")[0]
             path = os.path.join(tempfile.mkdtemp(), f"b{i}.js")

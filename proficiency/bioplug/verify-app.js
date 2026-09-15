@@ -396,11 +396,16 @@
         h.push('<tr><th>' + esc(a) + '</th>');
         for (var pos = 1; pos <= s.runs; pos++) {
           var row = r.rows.find(function (x) { return x.analyst === a && x.order === pos; });
-          h.push('<td class="num">' + esc(row.id) + '</td>');
+          // 시편 ID 아래에 그 시편의 스크리닝 값을 같이 둔다. 시험 당일 대조용이다.
+          h.push('<td class="num">' + esc(row.id) +
+                 '<span class="cellval">' + esc(row.screen) + '</span></td>');
         }
         h.push('</tr>');
       });
       h.push('</table></div>');
+      h.push('<p class="spare" style="font-size:13px">칸 아래 작은 숫자는 그 시편의 ' +
+             '스크리닝 값 (' + (s.unit === 'cfu' ? 'CFU' : 'R') + ') 입니다. ' +
+             '본 시험 측정값이 아니라 배정 전에 잰 값입니다.</p>');
       h.push('<h3>균형 검증</h3><p>완전균형·순서균형: <strong>' +
              (r.balance.passed ? '<span class="ok">적합</span>' : '<span class="no">부적합</span>') +
              '</strong>' + (r.balance.issues.length ? ' — ' + esc(r.balance.issues.join('; ')) : '') + '</p>');
@@ -606,5 +611,338 @@ s.analysts.map(function (a) {
       lines.push([x.analyst, x.order, x.sample, x.id, x.screen, ''].join(','));
     });
     download('allocation_' + r.spec.seed + '.csv', '﻿' + lines.join('\n'), 'text/csv');
+  });
+
+  // ==========================================================================
+  // 모드 B — 시험 후 판정
+  // ==========================================================================
+
+  var J = window.ProfJudge;
+  var jState = { result: null };
+
+  function setMode(toB) {
+    $('tabA').classList.toggle('on', !toB);
+    $('tabB').classList.toggle('on', toB);
+    $('modeA').classList.toggle('hidden', toB);
+    $('modeB').classList.toggle('hidden', !toB);
+  }
+  $('tabA').addEventListener('click', function () { setMode(false); });
+  $('tabB').addEventListener('click', function () { setMode(true); });
+
+  fillSelect('jAnalysts', 3, 5, 5);
+  fillSelect('jSamples', 3, 5, 3);
+  fillSelect('jDishes', 1, 3, 2);
+
+  function jExpected() { return +$('jSamples').value * +$('jDishes').value; }
+
+  function jUpdateNote() {
+    var n = jExpected(), k = +$('jAnalysts').value;
+    $('jNeedNote').innerHTML =
+      '시험자 1인당 측정값 <strong>' + n + '개</strong> (시료 ' + $('jSamples').value +
+      ' × 페트리 ' + $('jDishes').value + '). 시험자 ' + k + '명이면 모두 <strong>' +
+      (n * k) + '개</strong>.';
+  }
+
+  // 입력칸을 다시 그린다. 이미 넣은 값과 이름은 살린다.
+  function jBuildBoxes() {
+    var k = +$('jAnalysts').value, wrap = $('jBoxes');
+    var keep = [];
+    wrap.querySelectorAll('.box').forEach(function (b) {
+      keep.push({ name: b.querySelector('.name').value,
+                  text: b.querySelector('textarea').value });
+    });
+    wrap.innerHTML = '';
+    for (var i = 0; i < k; i++) {
+      var box = document.createElement('div');
+      box.className = 'box';
+
+      var name = document.createElement('input');
+      name.className = 'name';
+      name.setAttribute('aria-label', '시험자 이름');
+      name.value = keep[i] ? keep[i].name : String.fromCharCode(65 + i);
+
+      var ta = document.createElement('textarea');
+      ta.placeholder = '숫자를 엔터로\n구분해 붙여넣기';
+      ta.value = keep[i] ? keep[i].text : '';
+      ta.addEventListener('input', jUpdateCounts);
+
+      var cnt = document.createElement('div');
+      cnt.className = 'count';
+
+      box.appendChild(name); box.appendChild(ta); box.appendChild(cnt);
+      wrap.appendChild(box);
+    }
+    jUpdateCounts();
+  }
+
+  function jReadGroups() {
+    return Array.prototype.map.call($('jBoxes').querySelectorAll('.box'), function (b, i) {
+      var p = J.parseNumbers(b.querySelector('textarea').value);
+      return { name: b.querySelector('.name').value.trim() || String.fromCharCode(65 + i),
+               values: p.values, invalid: p.invalid };
+    });
+  }
+
+  function jUpdateCounts() {
+    var want = jExpected(), cells = $('jBoxes').querySelectorAll('.count');
+    jReadGroups().forEach(function (g, i) {
+      var n = g.values.length, txt = n + ' / ' + want + '개', cls = 'count';
+      if (g.invalid.length) { cls += ' bad'; txt += ' · 숫자 아닌 값 ' + g.invalid.length + '개'; }
+      else if (n === want) cls += ' ok';
+      else if (n > 0) cls += ' bad';
+      cells[i].className = cls;
+      cells[i].textContent = txt;
+    });
+  }
+
+  ['jAnalysts', 'jSamples', 'jDishes'].forEach(function (id) {
+    $(id).addEventListener('change', function () { jUpdateNote(); jBuildBoxes(); });
+  });
+  jUpdateNote();
+  jBuildBoxes();
+
+  $('jClear').addEventListener('click', function () {
+    $('jBoxes').querySelectorAll('textarea').forEach(function (t) { t.value = ''; });
+    $('jResults').classList.add('hidden');
+    $('jReportSection').classList.add('hidden');
+    $('jMsg').classList.add('hidden');
+    jUpdateCounts();
+  });
+
+  $('jDemo').addEventListener('click', function () {
+    var want = jExpected(), cfu = $('jUnit').value === 'cfu';
+    var rnd = S.mulberry32(20260914);
+    $('jBoxes').querySelectorAll('textarea').forEach(function (t, ai) {
+      // 마지막 시험자에게만 치우침을 준다 — 판정이 그것을 잡아내는지 보기 위함이다.
+      var k = $('jBoxes').querySelectorAll('textarea').length;
+      var bias = ai === k - 1 ? 0.22 : 0;
+      var out = [];
+      for (var j = 0; j < want; j++) {
+        out.push(cfu
+          ? String(Math.max(31, Math.round(S.gauss(rnd, 180, 30) * Math.pow(10, bias))))
+          : S.gauss(rnd, bias, 0.14).toFixed(2));
+      }
+      t.value = out.join('\n');
+    });
+    jUpdateCounts();
+  });
+
+  function jRun() {
+    var msg = $('jMsg'), want = jExpected(), gs = jReadGroups(), problems = [];
+    gs.forEach(function (g) {
+      if (g.invalid.length) {
+        problems.push(g.name + ': 숫자가 아닌 값 (' + g.invalid.slice(0, 3).join(', ') + ')');
+      } else if (g.values.length !== want) {
+        problems.push(g.name + ': ' + g.values.length + '개 (기대 ' + want + '개)');
+      }
+    });
+    if (problems.length) {
+      msg.textContent = problems.join(' · ');
+      msg.classList.remove('hidden');
+      return;
+    }
+    try {
+      jState.result = J.analyze(
+        gs.map(function (g) { return g.name; }),
+        gs.map(function (g) { return g.values; }),
+        { inputType: $('jUnit').value, delta: +$('jDelta').value, alpha: +$('jAlpha').value });
+    } catch (e) {
+      msg.textContent = e.message;
+      msg.classList.remove('hidden');
+      return;
+    }
+    msg.classList.add('hidden');
+    jRender();
+  }
+  $('jRun').addEventListener('click', jRun);
+
+  // --- 모드 B 출력 -------------------------------------------------------------
+
+  function sgn(x, d) {
+    if (x === null || x === undefined || isNaN(x)) return '-';
+    return (x >= 0 ? '+' : '') + x.toFixed(d === undefined ? 4 : d);
+  }
+  function verdict(t) { return t.passed ? '적합' : '부적합'; }
+
+  function jRender() {
+    var r = jState.result, h = [];
+    var worstZ = Math.max.apply(null, r.z.scores.map(function (s) { return Math.abs(s.z); }));
+    var zOk = worstZ < 2;
+
+    if (r.countWarnings.length) {
+      h.push('<p class="note bad"><strong>경고</strong> 계수 유효범위(' + J.COUNT_MIN + '~' +
+             J.COUNT_MAX + ') 이탈: ' +
+             r.countWarnings.map(function (w) {
+               return esc(w.name) + ' — ' + w.values.join(', ');
+             }).join(' / ') + '. 희석 단계를 다시 확인해야 합니다.</p>');
+    }
+
+    h.push('<h2>3. 시험자별 요약</h2><div class="card">');
+    h.push('<div class="tablewrap"><table><tr><th>시험자</th><th class="num">평균</th>' +
+           '<th class="num">표준편차</th><th class="num">z-score</th><th>판정</th></tr>');
+    r.names.forEach(function (name, i) {
+      var s = r.z.scores[i];
+      var cls = s.flag === '만족' ? 'ok' : s.flag === '경고' ? 'wa' : 'no';
+      h.push('<tr><th>' + esc(name) + '</th><td class="num">' + sgn(r.means[i]) +
+             '</td><td class="num">' + f(r.stdevs[i]) + '</td><td class="num">' + sgn(s.z, 2) +
+             '</td><td><span class="' + cls + '">' + s.flag + '</span></td></tr>');
+    });
+    h.push('</table></div>');
+    h.push('<p class="spare" style="font-size:13px">단위 ' + esc(r.unit) +
+           ' · 기준값(로버스트 평균) ' + sgn(r.z.assigned) +
+           ', 로버스트 표준편차 ' + f(r.z.sigma) + ' (ISO 13528 Algorithm A)</p></div>');
+
+    h.push('<h2>4. 숙련도 판정</h2><div class="card">');
+    h.push('<p>최대 |z| = <strong>' + worstZ.toFixed(2) + '</strong> → <strong>' +
+           (zOk ? '<span class="ok">전원 만족</span>' : '<span class="no">부적합자 있음</span>') +
+           '</strong></p>');
+    h.push('<p class="spare" style="font-size:13px">|z| &lt; 2 만족, 2 ≤ |z| &lt; 3 경고, ' +
+           '|z| ≥ 3 부적합 (ISO/IEC 17043 주 판정)</p>');
+
+    h.push('<h3>보조 검정</h3><div class="tablewrap"><table>' +
+           '<tr><th>검정</th><th class="num">통계량</th><th class="num">p-value</th>' +
+           '<th>결과</th><th>의미</th></tr>');
+    [[r.levene, '시험자 간 산포가 같은가'],
+     [r.anova, '평균 차이가 탐지되는가'],
+     [r.tost, '평균이 δ 이내로 동등한가']].forEach(function (x) {
+      var t = x[0];
+      h.push('<tr><td>' + esc(t.name) + '</td><td class="num">' + f(t.statistic) +
+             '</td><td class="num">' + f(t.pValue, 5) + '</td><td><span class="' +
+             (t.passed ? 'ok' : 'no') + '">' + verdict(t) + '</span></td><td>' + x[1] + '</td></tr>');
+    });
+    h.push('</table></div>');
+    h.push('<p class="note">분산분석의 “적합”은 차이를 <strong>찾지 못했다</strong>는 뜻이지 ' +
+           '차이가 <strong>없다</strong>는 증명이 아닙니다. 차이 없음의 입증은 TOST 가 담당합니다.</p>');
+
+    var ga = r.grubbsAll, gm = r.grubbsMeans;
+    h.push('<h3>이상치 검정 (Grubbs)</h3><ul style="margin:0;padding-left:20px;font-size:13px">');
+    h.push('<li>전체 측정값: G = ' + f(ga.statistic) + ' (임계 ' + f(ga.critical) +
+           '), 최대편차 ' + sgn(ga.value) + ' (' + esc(r.grubbsAllOwner) + ') → <strong class="' +
+           (ga.passed ? 'ok' : 'no') + '">' + verdict(ga) + '</strong></li>');
+    h.push('<li>시험자 평균: G = ' + f(gm.statistic) + ' (임계 ' + f(gm.critical) +
+           '), 최대편차 ' + sgn(gm.value) + ' (' + esc(r.names[gm.index]) + ') → <strong class="' +
+           (gm.passed ? 'ok' : 'no') + '">' + verdict(gm) + '</strong></li></ul>');
+    if (ga.passed && gm.passed) {
+      h.push('<p class="note">통계적 이상치가 없습니다. 눈에 띄는 값이 있더라도 ' +
+             '<strong>제외할 근거가 없으므로 모두 보고에 포함해야 합니다.</strong></p>');
+    }
+    h.push('</div>');
+
+    h.push('<h2>5. 진단 — 무작위 재배정 통과율</h2><div class="card">');
+    h.push('<p>전체 값을 무작위로 재배정했을 때 현행 기준(등분산+분산분석) 통과율: <strong>' +
+           pct(r.randomRate) + '</strong> · 실제 배정: <strong class="' +
+           (r.classicPass ? 'ok' : 'no') + '">' + (r.classicPass ? '통과' : '탈락') +
+           '</strong> <span class="spare">(' + r.trials.toLocaleString() + '회 시행)</span></p>');
+    h.push('<p class="note' + (r.randomRate >= 0.5 && !r.classicPass ? ' bad'
+           : r.randomRate < 0.5 ? ' warn' : '') + '">' + esc(diagnosis(r)) + '</p>');
+    h.push('</div>');
+
+    $('jResults').innerHTML = h.join('');
+    $('jResults').classList.remove('hidden');
+    $('jReport').textContent = jMarkdown();
+    $('jReportSection').classList.remove('hidden');
+  }
+
+  /* 무작위 재배정 통과율의 해석. judge.py 의 진단문과 같은 기준으로 가른다. */
+  function diagnosis(r) {
+    if (r.randomRate >= 0.5 && !r.classicPass) {
+      return '무작위로 섞으면 ' + Math.round(r.randomRate * 100) +
+        '% 가 통과하는데 실제 배정만 탈락했습니다. 우연이 아니라 시험자별 체계적 편향이 ' +
+        '실재한다는 뜻입니다. 배정을 바꿔 통과시키는 것은 이 편향을 은폐하는 것이므로, ' +
+        '편향의 원인(접종액 조제, 세척 회수, 판독 습관 등)을 조사해야 합니다.';
+    }
+    if (r.randomRate < 0.5) {
+      return '무작위 배정으로도 절반 이상 탈락합니다. 전체 산포 자체가 커서 어떤 배정으로도 ' +
+        '정당하게 통과할 수 없습니다. 기법 표준화가 먼저입니다.';
+    }
+    return '전체 산포가 충분히 작고 실제 배정도 통과했습니다.';
+  }
+
+  /* judge.py 의 format_report 와 같은 순서·같은 내용의 Markdown 보고서. */
+  function jMarkdown() {
+    var r = jState.result, L = [];
+    var worstZ = Math.max.apply(null, r.z.scores.map(function (s) { return Math.abs(s.z); }));
+
+    L.push('# 비교숙련도 판정 보고서', '');
+    L.push('- 입력 단위: ' + r.unit);
+    L.push('- 시험자 ' + r.names.length + '명 × 측정값 ' + r.nPerAnalyst + '개');
+    L.push('- 유의수준 α = ' + r.alpha + ', 동등성 한계 δ = ±' + r.delta);
+    L.push('- 생성일: ' + new Date().toISOString().slice(0, 10), '');
+
+    if (r.countWarnings.length) {
+      L.push('> **경고** 계수 유효범위(' + J.COUNT_MIN + '~' + J.COUNT_MAX + ') 이탈:');
+      r.countWarnings.forEach(function (w) {
+        L.push('> - ' + w.name + ': ' + w.values.join(', '));
+      });
+      L.push('');
+    }
+
+    L.push('## 1. 시험자별 요약', '');
+    L.push('| 시험자 | 평균 | 표준편차 | z-score | 판정 |');
+    L.push('|---|---:|---:|---:|---|');
+    r.names.forEach(function (name, i) {
+      L.push('| ' + name + ' | ' + sgn(r.means[i]) + ' | ' + f(r.stdevs[i]) + ' | ' +
+             sgn(r.z.scores[i].z, 2) + ' | ' + r.z.scores[i].flag + ' |');
+    });
+    L.push('');
+    L.push('기준값(로버스트 평균) = ' + sgn(r.z.assigned) + ', 로버스트 표준편차 = ' +
+           f(r.z.sigma) + ' (ISO 13528 Algorithm A)', '');
+
+    L.push('## 2. 숙련도 판정 (ISO/IEC 17043 주 판정)', '');
+    L.push('- 최대 |z| = ' + worstZ.toFixed(2));
+    L.push('- **판정: ' + (worstZ < 2 ? '전원 만족' : '부적합자 있음') +
+           '** (|z| < 2 만족, 2 ≤ |z| < 3 경고, |z| ≥ 3 부적합)', '');
+
+    L.push('## 3. 보조 검정', '');
+    L.push('| 검정 | 통계량 | p-value | 결과 | 의미 |');
+    L.push('|---|---:|---:|---|---|');
+    [[r.levene, '시험자 간 산포가 같은가'],
+     [r.anova, '평균 차이가 탐지되는가'],
+     [r.tost, '평균이 δ 이내로 동등한가']].forEach(function (x) {
+      L.push('| ' + x[0].name + ' | ' + f(x[0].statistic) + ' | ' + f(x[0].pValue, 5) +
+             ' | ' + verdict(x[0]) + ' | ' + x[1] + ' |');
+    });
+    L.push('');
+    L.push('ANOVA 의 \'적합\'은 차이를 **찾지 못했다**는 뜻이지 차이가 **없다**는 증명이 아니다. ' +
+           '차이 없음의 입증은 TOST 가 담당한다.', '');
+
+    var ga = r.grubbsAll, gm = r.grubbsMeans;
+    L.push('## 4. 이상치 검정 (Grubbs)', '');
+    L.push('- 전체 측정값: G = ' + f(ga.statistic) + ' (임계 ' + f(ga.critical) +
+           '), 최대편차 ' + sgn(ga.value) + ' (' + r.grubbsAllOwner + ') → **' + verdict(ga) + '**');
+    L.push('- 시험자 평균: G = ' + f(gm.statistic) + ' (임계 ' + f(gm.critical) +
+           '), 최대편차 ' + sgn(gm.value) + ' (' + r.names[gm.index] + ') → **' + verdict(gm) + '**');
+    L.push('');
+    if (ga.passed && gm.passed) {
+      L.push('통계적 이상치가 없다. 눈에 띄는 값이 있더라도 **제외할 근거가 없으므로 ' +
+             '모두 보고에 포함해야 한다.**', '');
+    }
+
+    L.push('## 5. 진단 — 무작위 재배정 통과율', '');
+    L.push('- 전체 값을 무작위로 재배정했을 때 현행 기준(등분산+ANOVA) 통과율: **' +
+           pct(r.randomRate) + '** (' + r.trials.toLocaleString() + '회 시행)');
+    L.push('- 실제 배정: **' + (r.classicPass ? '통과' : '탈락') + '**', '');
+    L.push('> ' + diagnosis(r), '');
+
+    return L.join('\n');
+  }
+
+  $('jCopy').addEventListener('click', function () {
+    navigator.clipboard.writeText($('jReport').textContent).then(function () {
+      var b = $('jCopy'), t = b.textContent;
+      b.textContent = '복사됨'; setTimeout(function () { b.textContent = t; }, 1400);
+    });
+  });
+  $('jDownload').addEventListener('click', function () {
+    download('proficiency_report_' + new Date().toISOString().slice(0, 10) + '.md',
+             $('jReport').textContent, 'text/markdown');
+  });
+  // judge.py 가 그대로 읽을 수 있는 형식으로 내보낸다.
+  $('jCsv').addEventListener('click', function () {
+    var gs = jReadGroups(), n = jExpected();
+    var lines = ['분석자,' + Array.from({ length: n }, function (_, i) { return i + 1; }).join(',')];
+    gs.forEach(function (g) { lines.push([g.name].concat(g.values).join(',')); });
+    download('measurements_' + new Date().toISOString().slice(0, 10) + '.csv',
+             '﻿' + lines.join('\n'), 'text/csv');
   });
 })();

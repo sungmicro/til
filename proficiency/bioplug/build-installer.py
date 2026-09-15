@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """검증 탭 배포물을 만든다.
 
-verify.html / verify-stats.js / verify-app.js 를 원본으로 삼아
+verify.html / verify-stats.js / verify-judge.js / verify-app.js 를 원본으로 삼아
 두 가지를 생성한다. 원본이 하나뿐이므로 내용이 어긋날 일이 없다.
 
   install-verify.sh       ~/bioplug 에 설치하는 스크립트 (한 줄 실행)
@@ -13,7 +13,9 @@ import pathlib
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
-SOURCES = ["verify.html", "verify-stats.js", "verify-app.js"]
+# JS 는 불러오는 순서대로 둔다. verify-app.js 가 앞의 둘에 기댄다.
+SCRIPTS = ["verify-stats.js", "verify-judge.js", "verify-app.js"]
+SOURCES = ["verify.html"] + SCRIPTS
 
 
 def read(name):
@@ -22,11 +24,11 @@ def read(name):
 
 def build_standalone():
     html = read("verify.html")
-    stats, app = read("verify-stats.js"), read("verify-app.js")
-    html = html.replace(
-        '<script src="verify-stats.js"></script>\n<script src="verify-app.js"></script>',
-        "<script>\n" + stats + "</script>\n<script>\n" + app + "</script>",
-    )
+    tags = "\n".join(f'<script src="{n}"></script>' for n in SCRIPTS)
+    if tags not in html:
+        raise SystemExit("verify.html 의 script 태그가 예상과 다릅니다. SCRIPTS 순서를 확인하세요.")
+    inlined = "\n".join("<script>\n" + read(n) + "</script>" for n in SCRIPTS)
+    html = html.replace(tags, inlined)
     html = html.replace(
         "<title>검증 — 비교숙련도 설계</title>",
         "<title>검증 — 비교숙련도 설계</title>\n"
@@ -71,7 +73,7 @@ def build_installer():
         'mkdir -p "$DEST"',
         "",
         "# 이미 있으면 덮어쓰기 전에 백업한다.",
-        "for f in verify.html verify-stats.js verify-app.js; do",
+        f"for f in {' '.join(SOURCES)}; do",
         '  if [ -f "$DEST/$f" ]; then',
         '    cp "$DEST/$f" "$DEST/$f.bak.$(date +%Y%m%d%H%M%S)"',
         '    echo "기존 파일 백업: $DEST/$f.bak.*"',
@@ -85,7 +87,7 @@ def build_installer():
     parts += [
         'echo ""',
         'echo "설치 완료: $DEST"',
-        'for f in verify.html verify-stats.js verify-app.js; do',
+        f"for f in {' '.join(SOURCES)}; do",
         '  printf "  %s (%s bytes)\\n" "$f" "$(wc -c < "$DEST/$f" | tr -d " ")"',
         "done",
         "",
@@ -111,11 +113,10 @@ def build_installer():
         'echo "확인:  cd $DEST && python3 -m http.server 8000"',
         'echo "       http://localhost:8000/verify.html  (비밀번호 bioplug2026)"',
         'echo ""',
-        'echo "배포:  cd $ROOT && npx vercel --prod --yes"',
-        'echo "       https://bioplug.vercel.app/verify.html"',
+        'echo "배포:  cd $ROOT && node build.mjs && npx vercel --prod --yes"',
+        'echo "       https://bioplug.vercel.app/verify"',
         'echo ""',
-        'echo "메뉴에 링크를 넣으려면 기존 내비게이션에 아래를 추가하세요."',
-        "echo '       <a href=\"/verify.html\">검증</a>'",
+        'echo "탭 링크는 build.mjs 의 tabsHTML() 이 verify.html 유무를 보고 넣습니다."',
         "",
     ]
     return "\n".join(parts)
@@ -133,7 +134,7 @@ def main():
         print(f"{name:26s} {len(data):>7,} bytes  sha256 {hashlib.sha256(data).hexdigest()[:16]}")
 
     # 심어 넣은 내용이 원본과 같은지 확인한다.
-    for src in ["verify-stats.js", "verify-app.js"]:
+    for src in SCRIPTS:
         if read(src).strip() not in standalone:
             print(f"오류: {src} 가 단일 파일에 제대로 들어가지 않았습니다.", file=sys.stderr)
             return 1

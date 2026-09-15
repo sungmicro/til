@@ -14,8 +14,9 @@ ISO 22196 항균활성과 먹는물 일반세균(중온·저온) 두 가지를 �
 | `R/render_report.R` | R | Word(.docx) 렌더링 CLI |
 | `cfu_stats.py` | Python (표준 라이브러리만) | 통계 코어 |
 | `judge.py` | Python | 판정기 CLI (Markdown 출력) |
+| `bioplug/` | HTML·JS | bio-plug 「검증」 탭 (모드 A·B 를 브라우저에서) |
 | `samples/` | CSV | 예시 자료 (분석자 익명화) |
-| `tests/` | Python | 테스트 50개 |
+| `tests/` | Python·Node | 테스트 85개 + 브라우저 검사 |
 
 R 과 Python 두 언어로 독립 구현하고 `tests/test_cross_language.py` 로 서로 대조한다.
 두 구현이 소수 10자리까지 일치해야 테스트가 통과한다.
